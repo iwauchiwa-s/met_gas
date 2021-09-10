@@ -1,0 +1,589 @@
+// 気象データ自動取得プログラム　get_met_data.gas
+
+function all_reset(){
+  var spsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet1 = spsheet.getSheetByName("select_data");
+  var sheet2 = spsheet.getSheetByName("met_data");
+
+  sheet1.getRange('C6:D100').clear();
+  sheet1.getRange('F6:N100').clear();
+
+  sheet1.getRange('C4:D4').clear();
+  sheet1.getRange('F4').clear();
+  sheet1.getRange('L4:N4').clear();
+  sheet1.getRange('C4').clearDataValidations();
+  sheet1.getRange('F4').clearDataValidations();
+  sheet1.getRange('A4').setBorder(true,true,true,true,true,true,null,SpreadsheetApp.BorderStyle.SOLID_THICK　);
+  sheet1.getRange('C4').setBorder(true,true,true,true,true,true,null,SpreadsheetApp.BorderStyle.SOLID_THICK　);
+  sheet1.getRange('F4').setBorder(true,true,true,true,true,true,null,SpreadsheetApp.BorderStyle.SOLID_THICK　);
+
+  sheet2.clear();
+  sheet2.getRange('B5').clearDataValidations();
+  sheet2.getRange('B20').clearDataValidations();
+
+
+  var date = new Date();
+  date.setDate(date.getDate() - 1);
+  sheet1.getRange('A4').setValue(Utilities.formatDate( date, 'Asia/Tokyo', 'yyyy/MM/dd'));
+
+}
+
+
+
+function getPrecCode(){
+  var spsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = spsheet.getSheetByName("select_data");
+
+  sheet.getRange('C6:D100').clear();
+  sheet.getRange('D6:D100').setNumberFormat('@');
+  sheet.getRange('D4').setNumberFormat('@');
+
+  var getUrl = "https://www.data.jma.go.jp/obd/stats/etrn/select/prefecture00.php?prec_no=&block_no=&year=&month=&day=&view=";
+  var html = UrlFetchApp.fetch(getUrl).getContentText('UTF-8');
+  var data_list = Parser.data(html).from('<area shape="rect" ').to('>').iterate();
+  //console.log(data_list);
+
+  var p_name = [];
+  var p_code = [];
+
+  for (let i = 0; i < data_list.length; i++) {
+      var sp1 = 0;
+      var sp2 = 0;
+      var sp3 = 0;
+      //prefecture/area name
+      sp1 = data_list[i].indexOf('alt="', sp1) + 5;
+      sp2 = data_list[i].indexOf('"', sp1);
+      p_name[i] = data_list[i].substring(sp1, sp2);
+      //prefecture/area number
+      sp1 = data_list[i].indexOf('prec_no=', sp1) + 8;
+      sp2 = data_list[i].indexOf('&block_no', sp1);
+      p_code[i] = String( data_list[i].substring(sp1, sp2) );
+  }
+  //console.log(p_name,p_code);
+
+  const rule = SpreadsheetApp.newDataValidation().requireValueInList(p_name).build();
+  const cell = sheet.getRange('C4');
+  cell.setDataValidation(rule);
+  sheet.getRange('C4').clearContent();
+
+
+  var p_all = [];
+  p_all.push(p_name,p_code);
+  var _ = Underscore.load();
+  var arrTrans = _.zip.apply(_, p_all);//transpose
+
+  var r1 = 5;//start raw
+  var c1 = 3;//start column
+  var rd = data_list.length;//number of prec
+  var cd = 2;//number of prec info
+  sheet.getRange(r1 + 1, c1, rd, cd).setValues(arrTrans);
+}
+
+function getSiteCode(){
+  var spsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = spsheet.getSheetByName("select_data");
+
+  sheet.getRange('F6:N100').clear();
+  sheet.getRange('M6:N100').setNumberFormat('@');
+  sheet.getRange('M4:N4').setNumberFormat('@');
+
+  var p_name = sheet.getRange('C4').getValue();
+  if (p_name == '') {
+    Browser.msgBox("都道府県/地方をプルダウンで選択してください。");
+    return;
+  }
+  var lastRow=sheet.getDataRange().getLastRow();
+  
+  for(var i=6;i<=lastRow;i++){
+    if(sheet.getRange(i,3).getValue() === p_name){
+      var p_code = sheet.getRange('D'+(i)).getValue();
+      sheet.getRange('D4').setValue(p_code);
+    }
+  }
+
+  var getUrl = 'https://www.data.jma.go.jp/obd/stats/etrn/select/prefecture.php?prec_no='+ p_code +'&block_no=&year=&month=&day=&view=';
+  var html = UrlFetchApp.fetch(getUrl).getContentText('UTF-8');
+  var data_list = Parser.data(html).from('onmouseover').to('onmouseout').iterate();
+  //console.log(data_list[0],data_list[1]);
+
+  var s_name = [];
+  var s_kana = [];
+  var s_lat = [];
+  var s_lon = [];
+  var s_alt = [];
+  var s_sty = [];
+  var s_code = [];
+  var ps_code = [];
+  var s_syc = [];
+
+  for (let i = 0; i < data_list.length; i=i+2) {
+      var sp1 = 0;
+      var sp2 = 0;
+      var sp3 = 0;
+      var sp4 = 0;
+      //site style (a or s / AMEDAS or STATION)
+      sp1 = data_list[i].indexOf('viewPoint', sp1) + 11;
+      sp2 = sp1 + 1;
+      if(data_list[i].substring(sp1, sp2) == 'a'){
+        s_sty[i/2] = 'AMEDAS';
+        s_syc[i/2] = 'a';
+      }else if(data_list[i].substring(sp1, sp2) == 's'){
+        s_sty[i/2] = 'STATION';
+        s_syc[i/2] = 's';
+      }
+      //prec_code
+      ps_code[i/2] = p_code;
+      //block number
+      sp1 = data_list[i].indexOf(',', sp1) + 2;
+      sp2 = data_list[i].indexOf(',', sp1) - 1;
+      s_code[i/2] = String( data_list[i].substring(sp1, sp2) );
+      //site name
+      sp1 = data_list[i].indexOf(',', sp1) + 2;
+      sp2 = data_list[i].indexOf(',', sp1) - 1;
+      s_name[i/2] = data_list[i].substring(sp1, sp2);
+       //site kana expression
+      sp1 = data_list[i].indexOf(',', sp1) + 2;
+      sp2 = data_list[i].indexOf(',', sp1) - 1;
+      s_kana[i/2] = data_list[i].substring(sp1, sp2);
+       //site lat
+      sp1 = data_list[i].indexOf(',', sp1) + 2;
+      sp2 = data_list[i].indexOf(',', sp1) - 1;
+      sp3 = data_list[i].indexOf(',', sp1) + 2;
+      sp4 = data_list[i].indexOf(',', sp3) - 1;
+      s_lat[i/2] = data_list[i].substring(sp1, sp2) + "度" + data_list[i].substring(sp3, sp4) + "分";
+       //site lon
+      sp1 = data_list[i].indexOf(',', sp3) + 2;
+      sp2 = data_list[i].indexOf(',', sp1) - 1;
+      sp3 = data_list[i].indexOf(',', sp1) + 2;
+      sp4 = data_list[i].indexOf(',', sp3) - 1;
+      s_lon[i/2] = data_list[i].substring(sp1, sp2) + "度" + data_list[i].substring(sp3, sp4) + "分";
+       //site alt
+      sp1 = data_list[i].indexOf(',', sp3) + 2;
+      sp2 = data_list[i].indexOf(',', sp1) - 1;
+      s_alt[i/2] = data_list[i].substring(sp1, sp2);
+ }
+  //console.log(s_name);
+
+  const rule = SpreadsheetApp.newDataValidation().requireValueInList(s_name).build();
+  const cell = sheet.getRange('F4');
+  cell.setDataValidation(rule);
+  sheet.getRange('F4').clearContent();
+
+
+  var s_all = [];
+  s_all.push(s_name,s_kana,s_sty,s_lat,s_lon,s_alt,s_syc,ps_code,s_code);
+  var _ = Underscore.load();
+  var arrTrans = _.zip.apply(_, s_all);//transpose
+
+  var r1 = 5;//start raw
+  var c1 = 6;//start column
+  var rd = data_list.length / 2;//number of site
+  var cd = 9;//number of site info
+  sheet.getRange(r1 + 1, c1, rd, cd).setValues(arrTrans);
+
+}
+
+function getMetData() {
+  var spsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = spsheet.getSheetByName("met_data");
+  var sheet_s = spsheet.getSheetByName("select_data");
+
+  sheet.clear();
+
+  //date
+  var m_date = sheet_s.getRange('A4').getValue();
+  if (m_date == '') {
+    Browser.msgBox("日付けを正しく入力してください。");
+    return;
+  }
+  var yyyy = Utilities.formatString("%04d",m_date.getFullYear());
+  var mm = Utilities.formatString("%02d",m_date.getMonth() + 1);
+  var dd = Utilities.formatString("%02d",m_date.getDate());
+  //console.log(yyyy,mm,dd);
+
+  var s_name = sheet_s.getRange('F4').getValue();
+  if (s_name == '') {
+    Browser.msgBox("地点をプルダウンで選択してください。");
+    return;
+  }
+  var lastRow=sheet_s.getDataRange().getLastRow();
+  
+  var p_name = sheet_s.getRange('C4').getValue();
+
+  for(var i=6;i<=lastRow;i++){
+    if(sheet_s.getRange(i,6).getValue() === s_name){
+      var s_kana = sheet_s.getRange('G'+(i)).getValue();
+      var s_lat = sheet_s.getRange('I'+(i)).getValue();
+      var s_lon = sheet_s.getRange('J'+(i)).getValue();
+      var s_alt = sheet_s.getRange('K'+(i)).getValue();
+      var s_type = sheet_s.getRange('L'+(i)).getValue();
+      var p_code = sheet_s.getRange('M'+(i)).getValue();
+      var s_code = sheet_s.getRange('N'+(i)).getValue();
+      sheet_s.getRange('L4').setValue(s_type);
+      sheet_s.getRange('M4').setValue(p_code);
+      sheet_s.getRange('N4').setValue(s_code);
+    }
+  }
+
+  sheet.activate();
+
+  var getUrl = "https://www.data.jma.go.jp/obd/stats/etrn/view/hourly_" + s_type + "1.php?prec_no=" + p_code + "&block_no=" + s_code + "&year=" + yyyy + "&month=" + mm + "&day=" + dd + "&view=p1";
+  var html = UrlFetchApp.fetch(getUrl).getContentText('UTF-8');
+  var data_list = Parser.data(html).from('<tr class="mtx" style="text-align:right;">').to('</tr>').iterate();
+  //console.log(data_list);
+
+  var obstyle = '';
+  if (s_type == 'a') {
+    obstyle = 'アメダス';
+  } else if(s_type == 's'){
+    obstyle = '気象台/測候所';
+  }
+  //console.log(obstyle);
+  
+  
+  var r1 = 5;//start raw
+  var c1 = 5;//start column
+  var rd = data_list.length;//number of met data
+  if(rd < 3){  //case of no data
+    rd = 24;  
+  }
+  var cd = 18;//number of met data elements
+  sheet.getRange(r1, c1).setValue('時刻（時）');
+  sheet.getRange(r1, c1 + 1).setValue('現地気圧(hPa)');
+  sheet.getRange(r1, c1 + 2).setValue('海面気圧(hPa)');
+  sheet.getRange(r1, c1 + 3).setValue('降水量(mm)');
+  sheet.getRange(r1, c1 + 4).setValue('気温(℃)');
+  sheet.getRange(r1, c1 + 5).setValue('露点温度(℃)');
+  sheet.getRange(r1, c1 + 6).setValue('蒸気圧(hPa)');
+  sheet.getRange(r1, c1 + 7).setValue('湿度(％)');
+  sheet.getRange(r1, c1 + 8).setValue('風速(m/s)');
+  sheet.getRange(r1, c1 + 9).setValue('風向');
+  sheet.getRange(r1, c1 + 10).setValue('風向(deg.)');
+  sheet.getRange(r1, c1 + 11).setValue('日照時間(h)');
+  sheet.getRange(r1, c1 + 12).setValue('全天日射量(MJ/㎡)');
+  sheet.getRange(r1, c1 + 13).setValue('降雪(cm)');
+  sheet.getRange(r1, c1 + 14).setValue('積雪(cm)');
+  sheet.getRange(r1, c1 + 15).setValue('天気');
+  sheet.getRange(r1, c1 + 16).setValue('雲量');
+  sheet.getRange(r1, c1 + 17).setValue('視程(km)');
+  
+  sheet.getRange(r1, c1, rd + 1, cd).setBorder(true,true,true,true,true,true,null,null　);
+  sheet.getRange(r1, c1, rd + 1, cd).setHorizontalAlignment('center');
+
+  sheet.getRange('A1').setValue('URL');
+  sheet.getRange('A4').setValue('年月日');
+  sheet.getRange('A5').setValue('地点名');
+  sheet.getRange('A6').setValue('カナ表記');
+  sheet.getRange('A7').setValue('都道府県/地方');
+  sheet.getRange('A8').setValue('観測所タイプ');
+  sheet.getRange('A9').setValue('緯度');
+  sheet.getRange('A10').setValue('経度');
+  sheet.getRange('A11').setValue('標高(m)');
+  sheet.getRange('A12').setValue('タイプコード');
+  sheet.getRange('A13').setValue('都道府県/地方コード');
+  sheet.getRange('A14').setValue('地点コード');
+
+  sheet.getRange('C4').setValue('ダブルクリックしてカレンダー表示');
+  sheet.getRange('C4').setFontSize(8);
+  
+  sheet.getRange('B1').setValue(getUrl);
+  sheet.getRange('B4').setValue(m_date);
+  sheet.getRange('B5').setValue(s_name);
+  sheet_s.getRange('F4').copyTo(sheet.getRange('B5'));
+  sheet.getRange('B6').setValue(s_kana);
+  sheet.getRange('B7').setValue(p_name);
+  sheet.getRange('B8').setValue(obstyle);
+  sheet.getRange('B9').setValue(s_lat);
+  sheet.getRange('B10').setValue(s_lon);
+  sheet.getRange('B11').setValue(s_alt);
+  sheet.getRange('B12').setValue(s_type);
+  sheet.getRange('B13').setValue(p_code);
+  sheet.getRange('B14').setValue(s_code);
+  
+  sheet.getRange('A4:B14').setBorder(true,true,true,true,true,true,null,null　);
+  sheet.getRange('A4:B14').setHorizontalAlignment('left');
+  sheet.getRange('B4:B5').setBorder(true,true,true,true,true,true,null,SpreadsheetApp.BorderStyle.SOLID_THICK　);
+
+  if(data_list[0].indexOf('data_0_0') == -1){
+    Browser.msgBox("データがありませんでした。");
+    return;
+  };
+
+  
+  var d_tm = [];
+  var d_ops = [];
+  var d_sps = [];
+  var d_prc = [];
+  var d_tmp = [];
+  var d_dwp = [];
+  var d_wvp = [];
+  var d_hmd = [];
+  var d_wsp = [];
+  var d_wdr = [];
+  var d_wdd = [];
+  var d_stm = [];
+  var d_srd = [];
+  var d_snf = [];
+  var d_snd = [];
+  var d_sky = [];
+  var d_cld = [];
+  var d_vis = [];
+
+  if (s_type == 'a') {
+    //AMEDAS
+    for (let i = 0; i < data_list.length; i++) {
+      var sp1 = 0;
+      var sp2 = 0;
+      var sp3 = 0;
+      //1:time
+      sp1 = data_list[i].indexOf('<td style="white-space:nowrap">', sp1) + 31;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_tm[i] = data_list[i].substring(sp1, sp2);
+      //2:observed pressure
+      d_ops[i] = '';
+      //3:sea-level pressure
+      d_sps[i] = '';
+      //4:precipitation
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_prc[i] = data_list[i].substring(sp1, sp2);
+      //5:temperature
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_tmp[i] = data_list[i].substring(sp1, sp2);
+      //6:dew point
+      d_dwp[i] = '';
+      //7:water vapor
+      d_wvp[i] = '';
+      //8:humidity
+      d_hmd[i] = '';
+      //9:wind speed
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_wsp[i] = data_list[i].substring(sp1, sp2);
+      //10:wind direction
+      sp1 = data_list[i].indexOf('<td class="data_0_0" style="text-align:center">', sp1) + 47;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_wdr[i] = data_list[i].substring(sp1, sp2);
+      //11:insolation time
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_stm[i] = data_list[i].substring(sp1, sp2);
+      //12:solar radiation
+      d_srd[i] = '';
+      //13:snow fall
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_snf[i] = data_list[i].substring(sp1, sp2);
+      //14:snow depth
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_snd[i] = data_list[i].substring(sp1, sp2);
+      //15:sky weather
+      d_sky[i] = "";
+      //16:cloud cover
+      d_cld[i] = '';
+      //17:visibility
+      d_vis[i] = '';
+    }
+
+  } else if (s_type == 's'){
+    //STATION
+    for (let i = 0; i < data_list.length; i++) {
+      var sp1 = 0;
+      var sp2 = 0;
+      var sp3 = 0;
+      //1:time
+      sp1 = data_list[i].indexOf('<td style="white-space:nowrap">', sp1) + 31;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_tm[i] = data_list[i].substring(sp1, sp2);
+      //2:observed pressure
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_ops[i] = data_list[i].substring(sp1, sp2);
+      //3:sea-level pressure
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_sps[i] = data_list[i].substring(sp1, sp2);
+      //4:precipitation
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_prc[i] = data_list[i].substring(sp1, sp2);
+      //5:temperature
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_tmp[i] = data_list[i].substring(sp1, sp2);
+      //6:dew point
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_dwp[i] = data_list[i].substring(sp1, sp2);
+      //7:water vapor
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_wvp[i] = data_list[i].substring(sp1, sp2);
+      //8:humidity
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_hmd[i] = data_list[i].substring(sp1, sp2);
+      //9:wind speed
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_wsp[i] = data_list[i].substring(sp1, sp2);
+      //10:wind direction
+      sp1 = data_list[i].indexOf('<td class="data_0_0" style="text-align:center">', sp1) + 47;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_wdr[i] = data_list[i].substring(sp1, sp2);
+      //11:insolation time
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_stm[i] = data_list[i].substring(sp1, sp2);
+      //12:solar radiation
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_srd[i] = data_list[i].substring(sp1, sp2);
+      //13:snow fall
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_snf[i] = data_list[i].substring(sp1, sp2);
+      //14:snow depth
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_snd[i] = data_list[i].substring(sp1, sp2);
+      //15:sky weather
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp3 = data_list[i].indexOf('alt=', sp1);
+      if (sp3 == -1) {
+        d_sky[i] = "";
+      } else {
+        sp1 = sp3 + 5;
+        sp2 = data_list[i].indexOf('</td>', sp1) - 2;
+        d_sky[i] = data_list[i].substring(sp1, sp2);
+      }
+      //16:cloud cover
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_cld[i] = data_list[i].substring(sp1, sp2);
+      //17:visibility
+      sp1 = data_list[i].indexOf('<td class="data_0_0">', sp1) + 21;
+      sp2 = data_list[i].indexOf('</td>', sp1);
+      d_vis[i] = data_list[i].substring(sp1, sp2);
+    }
+  }
+
+  d_wdd = windDirec(d_wdr);
+
+  var d_all = [];
+  d_all.push(d_tm, d_ops, d_sps, d_prc, d_tmp, d_dwp, d_wvp, d_hmd, d_wsp, d_wdr, d_wdd, d_stm, d_srd, d_snf, d_snd, d_sky, d_cld, d_vis);
+  var _ = Underscore.load();
+  var arrTrans = _.zip.apply(_, d_all);//transpose
+
+  //console.log(d_all);
+
+  sheet.getRange(r1 + 1, c1, rd, cd).setValues(arrTrans);
+  
+  //chart list
+  var c_name = sheet.getRange('F5:V5').getValues();
+  //console.log(c_name);
+  var c_list = _.zip.apply(_, c_name);//transpose
+  const c_rule = SpreadsheetApp.newDataValidation().requireValueInList(c_list).build();
+  const cell = sheet.getRange('B20');
+  cell.setDataValidation(c_rule);
+  sheet.getRange('B19').setValue('自動グラフ作成');
+  sheet.getRange('B20').setValue('項目を選択');
+  sheet.getRange('B20').setBorder(true,true,true,true,true,true,null,SpreadsheetApp.BorderStyle.SOLID_THICK　);
+
+}
+
+function getAgainMetData(){
+  var spsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = spsheet.getSheetByName("met_data");
+  var sheet_s = spsheet.getSheetByName("select_data");
+  sheet.getRange('B4').copyTo(sheet_s.getRange('A4'));
+  sheet.getRange('B5').copyTo(sheet_s.getRange('F4'));
+
+  getMetData();
+}
+
+
+function buildChart(){
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetd = spreadsheet.getSheetByName("met_data");
+
+  var c_items = sheetd.getRange('F5:V5').getValues();
+  var c_select = sheetd.getRange('B20').getValue();
+  var c_num = c_items[0].indexOf(c_select);
+  //console.log(c_select, c_num);
+
+  var rangex = sheetd.getRange('E5:E29');
+  var rangey = sheetd.getRange(5,6+c_num,25,1);
+  var arrayx = sheetd.getRange('E6:E29').getValues();
+  var xmin = arrayx[0];
+  var xmax = arrayx[arrayx.length-1];
+  //console.log(xmin, xmax);
+  var arrayy = sheetd.getRange(6,6+c_num,24,1).getValues();//2-dimensional
+  var _ = Underscore.load();
+  var arrayt = _.zip.apply(_, arrayy);//transpose
+  var arry = arrayt[0];//1-dimensional
+  var arry = arry.filter(checkEmpty);
+   //console.log(c_num);
+  var arraysorty = arry.sort(function(a,b){return a-b});
+  var ymin = Number(arraysorty[0]);
+  var ymax = Number(arraysorty[arraysorty.length-1]);
+  var ymine = ymin - (ymax-ymin)*0.05; //5% mergin
+  var ymaxe = ymax + (ymax-ymin)*0.05; //5% mergin
+   //console.log(ymin, ymax);
+  if(c_num === 9){ //wind direc.
+    var ymine = 0;
+    var ymaxe = 360;
+  }
+  var chart = sheetd.newChart()
+  .asScatterChart()
+  .addRange(rangex)
+  .addRange(rangey)
+  
+  .setMergeStrategy(Charts.ChartMergeStrategy.MERGE_COLUMNS)
+  .setTransposeRowsAndColumns(false)
+  .setNumHeaders(1)
+  .setHiddenDimensionStrategy(Charts.ChartHiddenDimensionStrategy.IGNORE_ROWS)
+  .setOption('bubble.stroke', '#000000')
+  .setOption('useFirstColumnAsDomain', true)
+  .setOption('annotations.domain.textStyle.color', '#808080')
+  .setOption('textStyle.color', '#000000')
+  .setOption('legend.textStyle.color', '#1a1a1a')
+  .setOption('titleTextStyle.color', '#757575')
+  .setOption('annotations.total.textStyle.color', '#808080')
+  .setOption('hAxis.gridlines.count', 24)
+  .setXAxisTitle('時刻')
+  .setXAxisRange(xmin,xmax)
+  .setOption('hAxis.viewWindowMode', 'pretty')
+  .setOption('hAxis.textStyle.color', '#000000')
+  .setOption('hAxis.titleTextStyle.color', '#000000')
+  .setYAxisTitle(c_select)
+  .setYAxisRange(ymine,ymaxe)
+  .setOption('vAxes.0.textStyle.color', '#000000')
+  .setOption('vAxes.0.titleTextStyle.color', '#000000')
+  .setPosition(20, 6, 0, 0)
+  .build();
+  sheetd.insertChart(chart);
+  //var objectSheet = SpreadsheetApp.getActive().moveChartToObjectSheet(chart);
+}
+
+function checkEmpty(element) {
+  return element !== undefined && element !==  '--'  && element !== null && element !== '×' && element !== '///';
+}
+
+function windDirec(arr) {
+  var warrd = ['北','北北東','北東','東北東','東','東南東','南東','南南東','南','南南西','南西','西南西','西','西北西','北西','北北西'];
+  var warrn = [0,22.5,45,67.5,90,112.5,135,157.5,180,202.5,225,247.5,270,292.5,315,337.5];
+  var arrout =[];
+  for (let i = 0; i < arr.length; i++) {
+    var d = warrd.indexOf(arr[i]);
+    if(d === -1){
+      arrout[i] = '';
+    }else{
+      arrout[i] = warrn[d];
+    }
+  }
+  
+  return arrout;
+}
